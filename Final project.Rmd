@@ -1,0 +1,335 @@
+---
+title: "Linna_final project"
+output: html_notebook
+---
+
+My goal is to analyze the changes in air quality in Missouri over the last five years (2020-2024), which is after the outbreak.
+Step 1: Download and screen the overall air quality data for Missouri for the last five years. From 2020 through 2024-11-19
+https://aqs.epa.gov/aqsweb/airdata/download_files.html#Annual
+```{r}
+library(tidyverse)
+library(httr2)
+library(jsonlite)
+library(lubridate)
+library(dplyr)
+library(httr)
+```
+
+```{r}
+mo_2020 <- read_csv("data/annual_aqi_by_county_2020.csv")%>%
+  filter(State == "Missouri")
+mo_2021 <- read_csv("data/annual_aqi_by_county_2021.csv")%>%
+  filter(State == "Missouri")
+mo_2022 <- read_csv("data/annual_aqi_by_county_2022.csv")%>%
+  filter(State == "Missouri")
+mo_2023 <- read_csv("data/annual_aqi_by_county_2023.csv")%>%
+  filter(State == "Missouri")
+mo_2024 <- read_csv("data/annual_aqi_by_county_2024.csv")%>%
+  filter(State == "Missouri")
+```
+
+Step 2: Combine all the data and get a preliminary understanding of the dataset
+Included in this data set are 21 Missouri counties(including st.Louis) with monitoring sites from 2020-2024.
+```{r}
+mo_all <- bind_rows(mo_2020, mo_2021, mo_2022, mo_2023, mo_2024)
+
+#The year with the highest and more unusual number of bad air quality is 2023.
+mo_all %>% 
+  group_by(Year) %>%
+  summarise(
+    bad_days = sum(`Unhealthy for Sensitive Groups Days`) +
+               sum(`Unhealthy Days`) +
+               sum(`Very Unhealthy Days`) +
+               sum(`Hazardous Days`)) %>%
+  arrange(desc(bad_days))
+
+mo_all%>% 
+  group_by(Year) %>%
+  summarise(good_days = sum(`Good Days`)) %>% 
+  arrange(desc(good_days))
+
+#St. Louis has had poor air quality for the last five years.
+mo_all %>% 
+  group_by(County) %>%
+  summarise(
+    bad_days = sum(`Unhealthy for Sensitive Groups Days`) +
+               sum(`Unhealthy Days`) +
+               sum(`Very Unhealthy Days`) +
+               sum(`Hazardous Days`)) %>%
+  arrange(desc(bad_days))
+
+mo_all %>% 
+  group_by(Year, County) %>%
+  summarise(
+    bad_days = sum(`Unhealthy for Sensitive Groups Days`) +
+               sum(`Unhealthy Days`) +
+               sum(`Very Unhealthy Days`) +
+               sum(`Hazardous Days`)) %>%
+  arrange(desc(bad_days))
+```
+
+Analyze pollution data
+```{r}
+#2023 is the most polluted year in the last five years.
+mo_all %>% 
+  group_by(Year) %>%
+  summarise(median_aqi = median(`Median AQI`)) %>%
+  arrange(desc(median_aqi))
+#What were the most polluted years for each pollutant and in which years was the pollutant primarily found to be more prevalent?
+
+#Ozone and PM2.5 are the main pollutants, and as can be seen from the table, the number of ozone-polluted days increases gradually between 2020-2023, but is better controlled in 2024, and there is a general downward trend in the number of PM2.5-polluted days.
+
+mo_all %>% 
+  select(Year, `Days CO`, `Days NO2`, `Days Ozone`, `Days PM2.5`, `Days PM10`) %>%
+  pivot_longer(cols = -Year, names_to = "Pollutant", values_to = "Days") %>%
+  group_by(Year, Pollutant) %>%
+  summarise(total_days = sum(Days, na.rm = TRUE)) %>%
+  arrange(Pollutant, desc(total_days))
+
+#Buchanan is the county with the highest number of PM2.5 polluted days in the last five years, and Monroe is the county with the highest number of ozone polluted days in the last five years.
+mo_all %>% 
+select(County, Year, `Days CO`, `Days NO2`, `Days Ozone`, `Days PM2.5`, `Days PM10`) %>%
+  pivot_longer(cols = -c(County, Year), names_to = "Pollutant", values_to = "Days") %>%
+  group_by(County,Pollutant) %>%
+  summarise(total_days = sum(Days, na.rm = TRUE)) %>%
+  arrange(Pollutant, desc(total_days))
+```
+
+Air quality is known to have changed significantly from 2023 to 2024, so further analysis of daily data specific to 2023-2024 was conducted. Since the data tables available for download don't have separate daily data for pollutants in each state, I use the API to get the relevant data.
+
+Step 3: get the API key from U.S. Environmental Protection Agency (https://aqs.epa.gov/aqsweb/documents/data_api.html).
+The pm2.5 and ozone data are two important indicators of air quality, so this project also uses these two data parameters to analyze.
+```{r}
+email <- "lkpgc@umsystem.edu"
+key <- "goldcrane49"
+
+endpoint <- "https://aqs.epa.gov/data/api/dailyData/byState"
+
+resp_pm25 <- GET(
+  url = endpoint,
+  query = list(
+    email = email,
+    key = key,
+    param = "88101",
+    bdate = "20230101",
+    edate = "20231231",
+    state = "29"))
+
+json1 <- content(resp_pm25, "text") %>% fromJSON()
+
+
+```
+
+The dataset is too large and the API return structure is incorrectly recognized as a list.
+```{r}
+json1 <- content(resp_pm25, "text", encoding = "UTF-8") %>% fromJSON(flatten = TRUE)
+df_raw <- json1[["Data"]] %>% as.data.frame()
+dim(df_raw)
+pm25_2023 <- as_tibble(df_raw)
+View(pm25_2023)
+```
+
+
+```{r}
+email <- "lkpgc@umsystem.edu"
+key <- "goldcrane49"
+
+endpoint <- "https://aqs.epa.gov/data/api/dailyData/byState"
+
+resp_pm25_24 <- GET(
+  url = endpoint,
+  query = list(
+    email = email,
+    key = key,
+    param = "88101",
+    bdate = "20240101",
+    edate = "20241231",
+    state = "29"))
+
+json2 <- content(resp_pm25_24, "text", encoding = "UTF-8") %>% fromJSON(flatten = TRUE)
+df_raw <- json2[["Data"]] %>% as.data.frame()
+dim(df_raw)
+pm25_2024 <- as_tibble(df_raw)
+View(pm25_2024)
+```
+
+
+```{r}
+email <- "lkpgc@umsystem.edu"
+key <- "goldcrane49"
+
+endpoint <- "https://aqs.epa.gov/data/api/dailyData/byState"
+
+resp_O3 <- GET(
+  url = endpoint,
+  query = list(
+    email = email,
+    key = key,
+    param = "44201",
+    bdate = "20230101",
+    edate = "20231231",
+    state = "29"))
+
+json3 <- content(resp_O3, "text", encoding = "UTF-8") %>% fromJSON(flatten = TRUE)
+df_raw <- json3[["Data"]] %>% as.data.frame()
+dim(df_raw)
+O3_2023 <- as_tibble(df_raw)
+View(O3_2023)
+```
+
+
+```{r}
+email <- "lkpgc@umsystem.edu"
+key <- "goldcrane49"
+
+endpoint <- "https://aqs.epa.gov/data/api/dailyData/byState"
+
+resp_O3_24 <- GET(
+  url = endpoint,
+  query = list(
+    email = email,
+    key = key,
+    param = "44201",
+    bdate = "20240101",
+    edate = "20241231",
+    state = "29"))
+
+json4 <- content(resp_O3_24, "text", encoding = "UTF-8") %>% fromJSON(flatten = TRUE)
+df_raw <- json4[["Data"]] %>% as.data.frame()
+dim(df_raw)
+O3_2024 <- as_tibble(df_raw)
+View(O3_2024)
+```
+
+httr2 version
+```{r}
+req <- request("https://aqs.epa.gov/data/api/dailyData/byState") %>%
+ req_url_query(email = "lkpgc@umsystem.edu", key = "goldcrane49",  param = "88101", bdate = "20230101", edate = "20231231", state = "29") %>%
+req_headers("User-Agent" = "httr2") 
+resp <- req_perform(req)
+json <- resp_body_json(resp, simplifyVector = TRUE)
+data2 <- as.data.frame(json$Data)
+```
+
+Merge forms obtained through the API
+```{r}
+O3_all <- bind_rows(O3_2023, O3_2024)
+pm25_all <- bind_rows(pm25_2023, pm25_2024)
+
+#In order to get the monthly and seasonal analysis.
+O3_all <- O3_all %>%
+  mutate(
+    date_local = as.Date(date_local),
+    year = year(date_local),
+    month = month(date_local),
+    day = day(date_local)
+  ) %>%
+  filter(validity_indicator == "Y")
+
+#Overall, ozone concentrations are low and overall air quality is good in both years, as can be seen by the decrease in the 2024 average AQI of about 5.7 points (from 47 to 41).
+O3_all %>%
+group_by(year) %>%
+  summarise(mean_ozone = mean(arithmetic_mean))
+
+O3_all %>%
+group_by(year) %>%
+  filter(!is.na(aqi)) %>% 
+  summarise(mean_ozone = mean(aqi))
+
+#Ozone pollution is distinctly seasonal, with significantly higher ozone concentrations during the summer months, and with AQI values of 57 and 74 in May and June 2023, which according to EPA standards 0 - 50 indicates excellent air quality and 50-100 indicates good air quality, so Missouri's air quality is generally at a good level even though ozone concentrations increase during the summer months.
+O3_all %>%
+group_by(year, month) %>%
+  filter(!is.na(aqi)) %>% 
+  summarise(mean_ozone = mean(aqi))
+
+O3_all %>%
+group_by(year, month) %>%
+  filter(!is.na(aqi)) %>% 
+  summarise(mean_ozone = mean(arithmetic_mean))
+
+O3_all %>%
+group_by(year, month) %>%
+  summarise(max_ozone = mean(first_max_value))
+
+O3_all %>%
+group_by(county, year) %>%
+summarise(max_ozone = mean(first_max_value)) %>% 
+  arrange(desc(max_ozone))
+
+O3_all %>%
+group_by(county, year, month) %>%
+summarise(max_ozone = mean(first_max_value)) %>% 
+  arrange(desc(max_ozone))
+
+```
+
+```{r}
+pm25_all <- pm25_all %>% 
+  mutate(
+    date_local = as.Date(date_local),
+    year = year(date_local),
+    month = month(date_local),
+    day = day(date_local)
+  ) %>%
+  filter(validity_indicator == "Y")
+
+#The data shows a significant improvement in pm2.5 concentrations from 2023 to 2024.
+pm25_all %>% group_by(year) %>%
+  summarise(mean_pm25 = mean(arithmetic_mean))
+
+pm25_all %>%
+group_by(year) %>%
+  filter(!is.na(aqi)) %>% 
+  summarise(mean_pm25 = mean(aqi))
+
+#St. Louis City has significantly higher overall pm2.5 concentrations than the rest of Missouri.
+pm25_all %>%
+group_by(year, county) %>%
+  filter(!is.na(aqi)) %>% 
+  summarise(mean_pm25 = mean(aqi)) %>% 
+  arrange(desc(mean_pm25))
+
+#Missouri's June 2023 values of abnormally high pm2.5 concentrations were evident.
+pm25_all %>%
+group_by(year, month) %>%
+  summarise(max_pm25 = mean(first_max_value))
+
+pm25_all %>%
+group_by(county, year, month) %>%
+  summarise(max_pm25 = mean(first_max_value)) %>% 
+  arrange(desc(max_pm25))
+```
+
+Another interesting param "SCHOOL AIR TOXICS"
+Try to use httr2 get the data from SCHOOL AIR TOXICS class.
+```{r}
+req <- request("https://aqs.epa.gov/data/api/list/parametersByClass") %>%
+  req_url_query(
+    email = email,
+    key = key,
+    pc = "SCHOOL AIR TOXICS"
+  )
+
+resp <- req_perform(req)
+
+json5 <- resp_body_string(resp) %>% fromJSON()
+  print(colnames(json5$Data))
+  print(head(json5$Data))
+
+```
+
+
+Conclusion:
+1. 2023 was the most polluted year in the five-year period, showing the highest number of "unhealthy" air quality days across many counties, especially in St. Louis and Buchanan. However, air quality markedly improved in 2024, both in terms of AQI and pollutant-specific concentrations.
+
+2. The number of ozone pollution days gradually increases from 2020 to 2023, then decreases in 2024. Except for a peak in 2023, the number of pm2.5 pollution days generally shows a decreasing trend year by year.
+
+3. Seasonal ozone patterns: Although there is a clear seasonal trend in ozone concentrations, peaking in the summer months (May through August), the average daily ozone AQI decreased from 47 in 2023 to 41 in 2024, indicating better air quality. The number of days with unhealthy ozone levels remains low, mostly in the EPA's “good” to “moderate” range.
+
+4. Urban PM2.5 hotspots: Annual average concentrations decreased from 9.25 µg/m³ in 2023 to 7.47 µg/m³ in 2024, staying well below the EPA’s annual standard of 12 µg/m³.  Notably, St. Louis City exhibited consistently higher PM2.5 levels compared to other counties, and June 2023 saw a significant PM2.5 spike
+
+To conclude, over the last five years, 2023 was a poor year for air quality, but there was a large overall improvement in Missouri's air quality from 2023 to 2024.
+
+The biggest takeaway of this project is the API requesting practices. At the beginning, I didn’t fully understand the structure of the httr2 package and was simply copying the code provided in class. However, I consistently failed to retrieve data, likely because the dataset was very large and it was hard to pinpoint where the problem occurred. As a result, I switched to using the more intuitive httr package, which allowed me to successfully access the data. After that, I revisited httr2 and attempted the process again—with a clearer understanding of the request structure, I was able to identify where my earlier mistakes had been.
+
+
